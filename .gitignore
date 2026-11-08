@@ -1,0 +1,38 @@
+# env
+.env
+.env.local
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# go
+backend/bin/
+*.test
+
+# node
+node_modules/
+frontend/dist/
+
+# модели и данные
+cv/models/*
+!cv/models/.gitkeep
+data/raw/videos/*
+data/datasets/*
+data/snapshots/*
+!data/**/.gitkeep
+
+# ide / os
+.idea/
+.vscode/
+.DS_Store
+
+# веса и большие файлы
+*.pt
+*.onnx
+*.mp4
+*.avi
