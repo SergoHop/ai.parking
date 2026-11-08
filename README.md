@@ -26,7 +26,7 @@ diplom/
 │   │   ├── config/            — загрузка конфигурации из env/файла
 │   │   ├── transport/http/    — роутер, HTTP-хендлеры, middleware (CORS, logging, auth)
 │   │   ├── service/           — бизнес-логика: парковки, места, видео, статистика
-│   │   ├── auth/              — (опционально) пользователи, роли, JWT — если решим делать вход
+│   │   ├── auth/              — JWT-авторизация админа, bcrypt
 │   │   ├── repository/postgres/ — запросы к PostgreSQL (SQL, без ORM или с sqlc)
 │   │   ├── model/             — доменные модели (ParkingLot, ParkingSpot, Camera, Video, Detection)
 │   │   ├── integration/cv/    — клиент к Python-сервису компьютерного зрения
@@ -57,7 +57,7 @@ diplom/
 │   ├── index.html
 │   ├── public/                — статика
 │   └── src/
-│       ├── main.*             — точка входа (React или Vue — решим позже)
+│       ├── main.tsx           — точка входа React
 │       ├── pages/             — страницы: карта, парковка, статистика, админка
 │       ├── components/        — переиспользуемые компоненты (таблицы, карточки, графики)
 │       ├── features/parking-map/ — карта: слой парковок, маркеры, полигоны мест
@@ -90,17 +90,15 @@ diplom/
    изменения по WebSocket.
 4. Фронтенд показывает парковки на карте, цвет мест и статистику в реальном времени.
 
-## Стек (предварительно)
+## Стек
 
-- **CV**: Python, OpenCV, Ultralytics YOLO, ByteTrack, FastAPI
-- **Backend**: Go (net/http или chi), PostgreSQL, golang-migrate, WebSocket
-- **Frontend**: TypeScript + React или Vue 3 (не выбрано) + Vite, Яндекс Карты JS API
+- **CV**: Python 3.11, OpenCV, Ultralytics YOLO11, ByteTrack, FastAPI
+- **Backend**: Go 1.23, chi v5, pgx v5, PostgreSQL 16, golang-migrate, JWT, WebSocket
+- **Frontend**: React 19 + TypeScript + Vite, Яндекс Карты JS API, TanStack Query, Zustand
 - **Инфраструктура**: Docker Compose, Nginx
-
-Авторизация, роли и несколько парковок пока под вопросом — в структуре под них
-заложены места, но папки появятся, только если это войдёт в финальную версию.
 
 ## Статус
 
-Структура черновая: названия и набор папок можно менять, пока не выбраны
-конкретные библиотеки и формат входных данных.
+Этап 0 завершён: структура проекта, стек и архитектура зафиксированы.
+Следующий этап — M1: каркас Go-бэкенда, миграции и PostgreSQL в Docker.
+Полный план работ ведётся локально и в репозиторий не добавляется.
