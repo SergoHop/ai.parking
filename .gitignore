@@ -21,7 +21,8 @@ frontend/dist/
 # модели и данные
 cv/models/*
 !cv/models/.gitkeep
-data/raw/videos/*
+data/videos/*
+data/frames/*
 data/datasets/*
 data/snapshots/*
 !data/**/.gitkeep
