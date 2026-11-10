@@ -1,16 +1,32 @@
-.PHONY: help up down logs backend cv frontend test
+-include .env
+
+COMPOSE := docker compose --env-file .env -f deploy/docker-compose.yml
+
+POSTGRES_USER ?= parking
+POSTGRES_PASSWORD ?= parking
+POSTGRES_DB ?= parking
+POSTGRES_PORT ?= 5432
+MIGRATE_DB_URL = postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)?sslmode=disable
+
+.PHONY: help up down logs ps rebuild backend cv frontend test vet tidy psql migrate-up migrate-down
 
 help:            ## Показать команды
-	@grep -E '^[a-zA-Z_-]+:.*?## ' Makefile | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## ' Makefile | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
 
-up:              ## Поднять всё в Docker
-	docker compose -f deploy/docker-compose.yml up --build -d
+up:              ## Поднять Postgres, применить миграции и запустить backend
+	$(COMPOSE) up --build -d
 
 down:            ## Остановить контейнеры
-	docker compose -f deploy/docker-compose.yml down
+	$(COMPOSE) down
 
 logs:            ## Логи контейнеров
-	docker compose -f deploy/docker-compose.yml logs -f
+	$(COMPOSE) logs -f
+
+ps:              ## Статус контейнеров
+	$(COMPOSE) ps
+
+rebuild:         ## Пересобрать backend и перезапустить
+	$(COMPOSE) up --build -d backend
 
 backend:         ## Запустить Go-бэкенд локально
 	cd backend && go run ./cmd/api
@@ -24,3 +40,19 @@ frontend:        ## Запустить фронтенд локально
 test:            ## Тесты
 	cd backend && go test ./...
 	cd cv && pytest
+
+vet:             ## go vet
+	cd backend && go vet ./...
+
+tidy:            ## go mod tidy + gofmt
+	cd backend && go mod tidy && gofmt -w .
+
+psql:            ## Открыть psql в контейнере postgres
+	$(COMPOSE) exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
+
+migrate-up:      ## Применить миграции
+	$(COMPOSE) run --rm migrate
+
+migrate-down:    ## Откатить последнюю миграцию
+	$(COMPOSE) run --rm --entrypoint migrate migrate \
+		-path=/migrations -database "$(MIGRATE_DB_URL)" down 1

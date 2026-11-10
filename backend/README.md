@@ -1,18 +1,56 @@
 # backend (Go)
 
-REST API и WebSocket-сервер.
+REST API и WebSocket-сервер. Текущее состояние — этап M1: каркас, БД и health.
 
-- `cmd/api/main.go` — точка входа.
-- `internal/transport/http` — роутер и хендлеры.
-- `internal/service` — бизнес-логика.
-- `internal/auth` — (опционально) пользователи и роли.
-- `internal/repository/postgres` — доступ к БД.
-- `internal/integration/cv` — клиент Python-сервиса.
-- `internal/ws` — рассылка live-обновлений статусов мест.
-- `migrations` — SQL-миграции.
-- `api/openapi.yaml` — контракт API.
+- `cmd/api/main.go` — точка входа, graceful shutdown.
+- `internal/config` — чтение env и значения по умолчанию.
+- `internal/transport/http` — Gin-роутер, middleware, хендлеры.
+- `internal/model` — доменные структуры.
+- `internal/repository/postgres` — пул pgx и SQL-запросы.
+- `internal/service`, `internal/auth`, `internal/ws`,
+  `internal/integration/cv` — заготовки следующих этапов.
+- `migrations` — SQL-миграции golang-migrate.
+- `api/openapi.yaml` — контракт API (появится позже).
 
-Планируемые эндпоинты: `POST /api/videos` (загрузка файла),
-`GET /api/videos/{id}` (статус обработки), `/api/parking-lots`,
-`/api/parking-lots/{id}/spots`, `/api/spots/{id}/history`, `/api/stats`,
-`/ws/live`.
+## Команды
+
+Из корня репозитория:
+
+```bash
+make up            # postgres + миграции + backend в Docker
+make ps            # статус контейнеров
+make logs          # логи
+make down          # остановить
+make migrate-up    # применить миграции
+make migrate-down  # откатить последнюю
+make psql          # psql внутри контейнера
+```
+
+Локальный запуск (нужен .env в корне и Postgres на 5432):
+
+```bash
+cd backend && go run ./cmd/api
+```
+
+Проверки:
+
+```bash
+go build ./... && go vet ./... && go test ./...
+```
+
+## Эндпоинты M1
+
+- `GET /api/health` — `200 {"status":"ok","db":"ok"}` или
+  `503 {"status":"degraded","db":"down"}`.
+- `GET /api/parking-lots` — список парковок (пока пустой массив).
+
+Ошибки отдаются в формате:
+
+```json
+{ "error": { "code": "not_found", "message": "route not found" } }
+```
+
+## Порты
+
+- Backend на хосте — `8080` (`HTTP_PORT`), внутри контейнера — `8080`.
+- Postgres на хосте — `5432` (`POSTGRES_PORT`), внутри — `5432`.

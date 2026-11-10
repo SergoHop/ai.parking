@@ -109,13 +109,30 @@ diplom/
 ## Стек
 
 - **CV**: Python 3.11, OpenCV, Ultralytics YOLO11, ByteTrack, FastAPI
-- **Backend**: Go 1.23, chi v5, pgx v5, PostgreSQL 16, golang-migrate, JWT, WebSocket
+- **Backend**: Go 1.23, Gin 1.11, pgx v5, PostgreSQL 16, golang-migrate, JWT, WebSocket
 - **Frontend**: React 19 + TypeScript + Vite, Яндекс Карты JS API (карта, геокодер,
   маршруты), TanStack Query, Zustand
 - **Инфраструктура**: Docker Compose, Nginx
 
+## Быстрый старт
+
+```bash
+cp .env.example .env   # при необходимости сгенерируйте секреты
+make up                # postgres + миграции + backend
+curl localhost:8080/api/health
+```
+
+Порты на хосте: backend `8080`, PostgreSQL `5432` (внутри контейнеров —
+те же 8080 и 5432). Значения вынесены в `.env`.
+
+Для освобождения портов остановлены соседний subscription-сервис (занимал 8080)
+и Homebrew `postgresql@14` (занимал 5432, был пустой). Вернуть локальный
+Postgres: `brew services start postgresql@14`, тогда нашему проекту нужно
+сменить `POSTGRES_PORT` на свободный, например `5435`.
+
 ## Статус
 
-Этап 0 завершён: структура проекта, стек и концепция навигатора зафиксированы.
-Следующий этап — M1: каркас Go-бэкенда, миграции и PostgreSQL в Docker.
+M1 завершён: Go-каркас, миграции, PostgreSQL в Docker, `GET /api/health`
+и `GET /api/parking-lots` работают. Следующий этап — M2: CRUD парковок,
+мест и камер, JWT-логин админа и seed демо-парковки.
 Полный план работ ведётся локально и в репозиторий не добавляется.
