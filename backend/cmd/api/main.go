@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/SergoHop/ai.parking/backend/internal/auth"
 	"github.com/SergoHop/ai.parking/backend/internal/config"
 	"github.com/SergoHop/ai.parking/backend/internal/repository/postgres"
 	httptransport "github.com/SergoHop/ai.parking/backend/internal/transport/http"
@@ -40,7 +41,23 @@ func run() error {
 	}
 	defer db.Close()
 
-	router := httptransport.NewRouter(cfg, db, db)
+	created, err := auth.EnsureAdmin(ctx, db, cfg.AdminUsername, cfg.AdminPassword)
+	if err != nil {
+		return err
+	}
+	if created {
+		slog.Info("admin user created", "username", cfg.AdminUsername)
+	}
+
+	tokens := auth.NewManager(cfg.JWTSecret, cfg.JWTTTL)
+	router := httptransport.NewRouter(cfg, httptransport.Deps{
+		DB:      db,
+		Lots:    db,
+		Spots:   db,
+		Cameras: db,
+		Users:   db,
+		Tokens:  tokens,
+	})
 
 	server := &http.Server{
 		Addr:              ":" + cfg.HTTPPort,

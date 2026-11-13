@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -15,6 +16,9 @@ type Config struct {
 	DatabaseURL   string
 	CORSOrigins   []string
 	JWTSecret     string
+	JWTTTL        time.Duration
+	AdminUsername string
+	AdminPassword string
 	InternalToken string
 }
 
@@ -30,11 +34,22 @@ func Load() (*Config, error) {
 		DatabaseURL:   strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		CORSOrigins:   splitList(getenv("CORS_ORIGINS", "http://localhost:5173")),
 		JWTSecret:     strings.TrimSpace(os.Getenv("JWT_SECRET")),
+		AdminUsername: getenv("ADMIN_USERNAME", "admin"),
+		AdminPassword: strings.TrimSpace(os.Getenv("ADMIN_PASSWORD")),
 		InternalToken: strings.TrimSpace(os.Getenv("INTERNAL_TOKEN")),
 	}
 
+	ttl, err := time.ParseDuration(getenv("JWT_TTL", "24h"))
+	if err != nil {
+		return nil, fmt.Errorf("JWT_TTL must be a duration like 24h: %w", err)
+	}
+	cfg.JWTTTL = ttl
+
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
+	}
+	if cfg.JWTSecret == "" {
+		return nil, fmt.Errorf("JWT_SECRET is required")
 	}
 
 	return cfg, nil

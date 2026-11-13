@@ -6,28 +6,25 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/SergoHop/ai.parking/backend/internal/auth"
 	"github.com/SergoHop/ai.parking/backend/internal/config"
-	"github.com/SergoHop/ai.parking/backend/internal/model"
 )
 
 type fakePinger struct{ err error }
 
 func (f fakePinger) Ping(context.Context) error { return f.err }
 
-type fakeLots struct{}
-
-func (fakeLots) ListParkingLots(context.Context) ([]model.ParkingLot, error) {
-	return []model.ParkingLot{}, nil
-}
-
 func testRouter(pinger DBPinger) *gin.Engine {
 	return NewRouter(
 		&config.Config{AppEnv: "test", CORSOrigins: []string{"http://localhost:5173"}},
-		pinger,
-		fakeLots{},
+		Deps{
+			DB:     pinger,
+			Tokens: auth.NewManager("test-secret", time.Hour),
+		},
 	)
 }
 

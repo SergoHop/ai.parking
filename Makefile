@@ -8,7 +8,7 @@ POSTGRES_DB ?= parking
 POSTGRES_PORT ?= 5432
 MIGRATE_DB_URL = postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)?sslmode=disable
 
-.PHONY: help up down logs ps rebuild backend cv frontend test vet tidy psql migrate-up migrate-down
+.PHONY: help up down logs ps rebuild backend cv frontend test vet tidy psql migrate-up migrate-down seed seed-reset
 
 help:            ## Показать команды
 	@grep -E '^[a-zA-Z_-]+:.*?## ' Makefile | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -49,6 +49,12 @@ tidy:            ## go mod tidy + gofmt
 
 psql:            ## Открыть psql в контейнере postgres
 	$(COMPOSE) exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
+
+seed:            ## Заполнить БД демо-парковкой из data/lots/demo.json
+	cd backend && go run ./cmd/seed -file ../data/lots/demo.json
+
+seed-reset:      ## Пересоздать демо-парковку (удаляет старую с тем же именем)
+	cd backend && go run ./cmd/seed -file ../data/lots/demo.json -force
 
 migrate-up:      ## Применить миграции
 	$(COMPOSE) run --rm migrate

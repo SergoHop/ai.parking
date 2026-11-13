@@ -49,6 +49,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       JWT_SECRET: ${JWT_SECRET:-}
       JWT_TTL: ${JWT_TTL:-24h}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-}
       CV_SERVICE_URL: http://cv:8000
     ports:
