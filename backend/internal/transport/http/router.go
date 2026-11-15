@@ -45,23 +45,39 @@ type UserStore interface {
 	GetByUsername(ctx context.Context, username string) (*model.User, error)
 }
 
+// InternalStore is used by the CV worker endpoints (trusted, token-protected).
+type InternalStore interface {
+	GetCamera(ctx context.Context, id int64) (*model.Camera, error)
+	UpdateCameraHeartbeat(
+		ctx context.Context,
+		id int64,
+		status string,
+		lastFrameAt *time.Time,
+		fps *int,
+		resolution *string,
+	) error
+	ApplySpotEvents(ctx context.Context, cameraID *int64, events []model.SpotEvent) (int, error)
+}
+
 type Deps struct {
-	DB      DBPinger
-	Lots    ParkingLotStore
-	Spots   SpotStore
-	Cameras CameraStore
-	Users   UserStore
-	Tokens  *auth.Manager
+	DB       DBPinger
+	Lots     ParkingLotStore
+	Spots    SpotStore
+	Cameras  CameraStore
+	Users    UserStore
+	Internal InternalStore
+	Tokens   *auth.Manager
 }
 
 type Server struct {
-	cfg     *config.Config
-	db      DBPinger
-	lots    ParkingLotStore
-	spots   SpotStore
-	cameras CameraStore
-	users   UserStore
-	tokens  *auth.Manager
+	cfg      *config.Config
+	db       DBPinger
+	lots     ParkingLotStore
+	spots    SpotStore
+	cameras  CameraStore
+	users    UserStore
+	internal InternalStore
+	tokens   *auth.Manager
 }
 
 func NewRouter(cfg *config.Config, deps Deps) *gin.Engine {
@@ -75,13 +91,14 @@ func NewRouter(cfg *config.Config, deps Deps) *gin.Engine {
 	}
 
 	srv := &Server{
-		cfg:     cfg,
-		db:      deps.DB,
-		lots:    deps.Lots,
-		spots:   deps.Spots,
-		cameras: deps.Cameras,
-		users:   deps.Users,
-		tokens:  deps.Tokens,
+		cfg:      cfg,
+		db:       deps.DB,
+		lots:     deps.Lots,
+		spots:    deps.Spots,
+		cameras:  deps.Cameras,
+		users:    deps.Users,
+		internal: deps.Internal,
+		tokens:   deps.Tokens,
 	}
 
 	router := gin.New()
@@ -121,6 +138,12 @@ func NewRouter(cfg *config.Config, deps Deps) *gin.Engine {
 	admin.POST("/cameras", srv.createCamera)
 	admin.PUT("/cameras/:id", srv.updateCamera)
 	admin.DELETE("/cameras/:id", srv.deleteCamera)
+
+	// Внутренние эндпоинты CV-сервиса: общий секрет X-Internal-Token.
+	internal := api.Group("/internal")
+	internal.Use(srv.requireInternalToken)
+	internal.POST("/cameras/:id/heartbeat", srv.cameraHeartbeat)
+	internal.POST("/events", srv.spotEvents)
 
 	router.NoRoute(func(c *gin.Context) {
 		writeError(c, http.StatusNotFound, "not_found", "route not found")

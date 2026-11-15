@@ -8,7 +8,9 @@ POSTGRES_DB ?= parking
 POSTGRES_PORT ?= 5432
 MIGRATE_DB_URL = postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)?sslmode=disable
 
-.PHONY: help up down logs ps rebuild backend cv frontend test vet tidy psql migrate-up migrate-down seed seed-reset
+.PHONY: help up down logs ps rebuild backend cv cv-setup cv-model cv-run frontend test vet tidy psql migrate-up migrate-down seed seed-reset
+
+CV_PY := cv/.venv/bin/python
 
 help:            ## Показать команды
 	@grep -E '^[a-zA-Z_-]+:.*?## ' Makefile | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -31,15 +33,27 @@ rebuild:         ## Пересобрать backend и перезапустить
 backend:         ## Запустить Go-бэкенд локально
 	cd backend && go run ./cmd/api
 
+cv-setup:        ## Создать venv и установить зависимости CV (Python 3.11)
+	python3.11 -m venv cv/.venv
+	$(CV_PY) -m pip install -U pip
+	$(CV_PY) -m pip install -e "cv[dev]"
+
+cv-model:        ## Скачать веса yolo11n.pt в cv/models
+	mkdir -p cv/models
+	$(CV_PY) -c "from ultralytics import YOLO; YOLO('cv/models/yolo11n.pt')"
+
 cv:              ## Запустить CV-сервис локально
-	cd cv && uvicorn app.main:app --reload --port 8000
+	cd cv && .venv/bin/python -m uvicorn app.main:app --reload --port 8000
+
+cv-run:          ## Запустить CV-воркер без FastAPI (отладка)
+	cd cv && .venv/bin/python -m app.pipeline.runner
 
 frontend:        ## Запустить фронтенд локально
 	cd frontend && npm run dev
 
 test:            ## Тесты
 	cd backend && go test ./...
-	cd cv && pytest
+	cd cv && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest; else python3 -m pytest; fi
 
 vet:             ## go vet
 	cd backend && go vet ./...

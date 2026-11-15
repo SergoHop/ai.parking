@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/SergoHop/ai.parking/backend/internal/model"
 )
@@ -106,6 +107,81 @@ func ValidateCamera(in model.CameraInput) error {
 	return nil
 }
 
+// ValidateCameraHeartbeat checks a camera health report from the CV worker.
+func ValidateCameraHeartbeat(in model.CameraHeartbeatInput) error {
+	switch in.Status {
+	case "online", "offline", "error":
+	default:
+		return fmt.Errorf("status must be 'online', 'offline' or 'error'")
+	}
+	if in.FPS != nil && *in.FPS <= 0 {
+		return fmt.Errorf("fps must be positive")
+	}
+	if in.Resolution != nil && strings.TrimSpace(*in.Resolution) == "" {
+		return fmt.Errorf("resolution must not be empty")
+	}
+	if in.LastFrameAt != nil {
+		if err := validateEventTime(*in.LastFrameAt, "last_frame_at"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ValidateSpotEvents checks a batch of occupancy changes from the CV worker.
+func ValidateSpotEvents(in model.SpotEventsInput) error {
+	if in.CameraID != nil && *in.CameraID <= 0 {
+		return fmt.Errorf("camera_id must be positive")
+	}
+	if len(in.Events) == 0 {
+		return fmt.Errorf("events must not be empty")
+	}
+	if len(in.Events) > 500 {
+		return fmt.Errorf("too many events in one batch (max 500)")
+	}
+
+	for i, e := range in.Events {
+		if e.SpotID <= 0 {
+			return fmt.Errorf("events[%d].spot_id must be positive", i)
+		}
+		switch e.Status {
+		case "free", "occupied", "unknown":
+		default:
+			return fmt.Errorf("events[%d].status must be 'free', 'occupied' or 'unknown'", i)
+		}
+		if e.Confidence != nil && (*e.Confidence < 0 || *e.Confidence > 1) {
+			return fmt.Errorf("events[%d].confidence must be between 0 and 1", i)
+		}
+		if err := validateEventTime(e.CapturedAt, fmt.Sprintf("events[%d].captured_at", i)); err != nil {
+			return err
+		}
+		if e.SnapshotPath != nil && len(*e.SnapshotPath) > 512 {
+			return fmt.Errorf("events[%d].snapshot_path is too long", i)
+		}
+	}
+	return nil
+}
+
+func validateEventTime(t time.Time, field string) error {
+	if t.IsZero() {
+		return fmt.Errorf("%s is required", field)
+	}
+	if t.After(time.Now().Add(5 * time.Minute)) {
+		return fmt.Errorf("%s is too far in the future", field)
+	}
+	return nil
+}
+
+func validateLatLon(lat, lon float64, prefix string) error {
+	if lat < -90 || lat > 90 {
+		return fmt.Errorf("%s_lat must be between -90 and 90", prefix)
+	}
+	if lon < -180 || lon > 180 {
+		return fmt.Errorf("%s_lon must be between -180 and 180", prefix)
+	}
+	return nil
+}
+
 // ValidateDemoLot checks a seed file before it reaches the database.
 func ValidateDemoLot(d model.DemoLot) error {
 	lot := model.ParkingLotInput{
@@ -149,16 +225,6 @@ func ValidateDemoLot(d model.DemoLot) error {
 			return fmt.Errorf("duplicate spot code %q", s.Code)
 		}
 		seen[s.Code] = true
-	}
-	return nil
-}
-
-func validateLatLon(lat, lon float64, prefix string) error {
-	if lat < -90 || lat > 90 {
-		return fmt.Errorf("%s_lat must be between -90 and 90", prefix)
-	}
-	if lon < -180 || lon > 180 {
-		return fmt.Errorf("%s_lon must be between -180 and 180", prefix)
 	}
 	return nil
 }

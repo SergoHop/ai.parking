@@ -82,6 +82,18 @@ curl -X POST localhost:8080/api/auth/login \
 - `PUT/DELETE /api/spots/{id}`
 - `POST/PUT/DELETE /api/cameras[/{id}]`
 
+Внутренние эндпоинты CV-сервиса (заголовок `X-Internal-Token`,
+значение из `INTERNAL_TOKEN`):
+
+- `POST /api/internal/cameras/{id}/heartbeat` — статус камеры, `fps`,
+  разрешение, время последнего кадра; ответ `204`.
+- `POST /api/internal/events` — батч событий занятости; в одной транзакции
+  пишет `spot_events`, обновляет `spot_status` и `cameras.last_frame_at`;
+  ответ `200 {"accepted":N}`.
+
+Без токена или с неверным токеном — `401`; при незаданном `INTERNAL_TOKEN`
+в конфиге — `503`; неизвестное место/камера — `400 invalid_reference`.
+
 `PUT` — полная замена сущности. Ошибки отдаются в формате:
 
 ```json

@@ -51,12 +51,13 @@ func run() error {
 
 	tokens := auth.NewManager(cfg.JWTSecret, cfg.JWTTTL)
 	router := httptransport.NewRouter(cfg, httptransport.Deps{
-		DB:      db,
-		Lots:    db,
-		Spots:   db,
-		Cameras: db,
-		Users:   db,
-		Tokens:  tokens,
+		DB:       db,
+		Lots:     db,
+		Spots:    db,
+		Cameras:  db,
+		Users:    db,
+		Internal: db,
+		Tokens:   tokens,
 	})
 
 	server := &http.Server{

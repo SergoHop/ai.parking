@@ -36,6 +36,8 @@ func writeStoreError(c *gin.Context, err error) {
 		writeError(c, http.StatusNotFound, "not_found", "resource not found")
 	case errors.Is(err, repository.ErrConflict):
 		writeError(c, http.StatusConflict, "conflict", "resource already exists")
+	case errors.Is(err, repository.ErrInvalidReference):
+		writeError(c, http.StatusBadRequest, "invalid_reference", "unknown spot or camera")
 	default:
 		slog.Error("storage error", "error", err)
 		writeError(c, http.StatusInternalServerError, "internal_error", "storage error")

@@ -1,6 +1,9 @@
 package model
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ParkingLotInput is the JSON body for creating or replacing a parking lot.
 type ParkingLotInput struct {
@@ -34,6 +37,29 @@ type CameraInput struct {
 	Status     string  `json:"status"`
 	FPS        *int    `json:"fps"`
 	Resolution *string `json:"resolution"`
+}
+
+// CameraHeartbeatInput is sent by the CV worker to report camera health.
+type CameraHeartbeatInput struct {
+	Status      string     `json:"status"`
+	LastFrameAt *time.Time `json:"last_frame_at"`
+	FPS         *int       `json:"fps"`
+	Resolution  *string    `json:"resolution"`
+}
+
+// SpotEventInput is one occupancy change reported by the CV worker.
+type SpotEventInput struct {
+	SpotID       int64     `json:"spot_id"`
+	Status       string    `json:"status"`
+	Confidence   *float32  `json:"confidence"`
+	CapturedAt   time.Time `json:"captured_at"`
+	SnapshotPath *string   `json:"snapshot_path"`
+}
+
+// SpotEventsInput is a batch of occupancy events from one camera.
+type SpotEventsInput struct {
+	CameraID *int64           `json:"camera_id"`
+	Events   []SpotEventInput `json:"events"`
 }
 
 // DemoLot is the structure of data/lots/*.json used by cmd/seed.
