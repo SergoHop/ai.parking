@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -12,9 +13,11 @@ import (
 	"github.com/SergoHop/ai.parking/backend/internal/repository"
 )
 
-const spotColumns = `
+const spotBaseColumns = `
 	ps.id, ps.lot_id, ps.camera_id, ps.code, ps.polygon,
-	ps.map_lat, ps.map_lon, ps.map_geojson, ps.created_at,
+	ps.map_lat, ps.map_lon, ps.map_geojson, ps.created_at`
+
+const spotRawColumns = spotBaseColumns + `,
 	COALESCE(st.status, 'unknown'), st.confidence, st.updated_at`
 
 func scanSpot(row rowScanner) (*model.ParkingSpot, error) {
@@ -39,15 +42,18 @@ func scanSpot(row rowScanner) (*model.ParkingSpot, error) {
 	return &spot, nil
 }
 
-func (d *DB) ListSpotsByLot(ctx context.Context, lotID int64) ([]model.ParkingSpot, error) {
+func (d *DB) ListSpotsByLot(ctx context.Context, lotID int64, ttl time.Duration) ([]model.ParkingSpot, error) {
 	const query = `
-		SELECT ` + spotColumns + `
+		SELECT ` + spotBaseColumns + `,
+		       ` + effectiveStatusSQL + ` AS status,
+		       st.confidence, st.updated_at
 		FROM parking_spots ps
 		LEFT JOIN spot_status st ON st.spot_id = ps.id
-		WHERE ps.lot_id = $1
+		LEFT JOIN cameras cam ON cam.id = ps.camera_id
+		WHERE ps.lot_id = $2
 		ORDER BY ps.code`
 
-	rows, err := d.pool.Query(ctx, query, lotID)
+	rows, err := d.pool.Query(ctx, query, int(ttl.Seconds()), lotID)
 	if err != nil {
 		return nil, fmt.Errorf("query spots: %w", err)
 	}
@@ -59,6 +65,8 @@ func (d *DB) ListSpotsByLot(ctx context.Context, lotID int64) ([]model.ParkingSp
 		if err != nil {
 			return nil, fmt.Errorf("scan spot: %w", err)
 		}
+		// Unknown means there is no trustworthy occupancy data for this spot.
+		spot.Fresh = spot.Status != "unknown"
 		spots = append(spots, *spot)
 	}
 	if err := rows.Err(); err != nil {
@@ -69,7 +77,7 @@ func (d *DB) ListSpotsByLot(ctx context.Context, lotID int64) ([]model.ParkingSp
 
 func (d *DB) GetSpot(ctx context.Context, id int64) (*model.ParkingSpot, error) {
 	const query = `
-		SELECT ` + spotColumns + `
+		SELECT ` + spotRawColumns + `
 		FROM parking_spots ps
 		LEFT JOIN spot_status st ON st.spot_id = ps.id
 		WHERE ps.id = $1`

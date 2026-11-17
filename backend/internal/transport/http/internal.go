@@ -3,11 +3,13 @@ package http
 import (
 	"crypto/subtle"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/SergoHop/ai.parking/backend/internal/model"
 	"github.com/SergoHop/ai.parking/backend/internal/service"
+	"github.com/SergoHop/ai.parking/backend/internal/ws"
 )
 
 const internalTokenHeader = "X-Internal-Token"
@@ -45,11 +47,33 @@ func (s *Server) cameraHeartbeat(c *gin.Context) {
 		return
 	}
 
+	// Read the previous state first so a status transition can be broadcast.
+	camera, err := s.internal.GetCamera(c.Request.Context(), id)
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+
 	if err := s.internal.UpdateCameraHeartbeat(
 		c.Request.Context(), id, in.Status, in.LastFrameAt, in.FPS, in.Resolution,
 	); err != nil {
 		writeStoreError(c, err)
 		return
+	}
+
+	if camera.Status != in.Status {
+		lastFrame := in.LastFrameAt
+		if lastFrame == nil {
+			lastFrame = camera.LastFrameAt
+		}
+		s.hub.Broadcast(ws.Message{
+			Type:        "camera_status",
+			LotID:       camera.LotID,
+			CameraID:    id,
+			Status:      in.Status,
+			LastFrameAt: lastFrame,
+			At:          time.Now().UTC(),
+		})
 	}
 
 	c.Status(http.StatusNoContent)
@@ -84,11 +108,23 @@ func (s *Server) spotEvents(c *gin.Context) {
 		})
 	}
 
-	accepted, err := s.internal.ApplySpotEvents(c.Request.Context(), in.CameraID, events)
+	changes, err := s.internal.ApplySpotEvents(c.Request.Context(), in.CameraID, events)
 	if err != nil {
 		writeStoreError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"accepted": accepted})
+	for _, change := range changes {
+		s.hub.Broadcast(ws.Message{
+			Type:       "spot_status",
+			LotID:      change.LotID,
+			SpotID:     change.SpotID,
+			Code:       change.Code,
+			Status:     change.Status,
+			Confidence: change.Confidence,
+			At:         change.At,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"accepted": len(changes)})
 }

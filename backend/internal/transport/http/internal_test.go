@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/SergoHop/ai.parking/backend/internal/config"
 	"github.com/SergoHop/ai.parking/backend/internal/model"
 	"github.com/SergoHop/ai.parking/backend/internal/repository"
+	"github.com/SergoHop/ai.parking/backend/internal/ws"
 )
 
 type heartbeatCall struct {
@@ -63,17 +65,37 @@ func (f *fakeInternal) UpdateCameraHeartbeat(
 
 func (f *fakeInternal) ApplySpotEvents(
 	_ context.Context,
-	_ *int64,
+	cameraID *int64,
 	events []model.SpotEvent,
-) (int, error) {
+) ([]model.SpotChange, error) {
 	if f.applyErr != nil {
-		return 0, f.applyErr
+		return nil, f.applyErr
 	}
 	f.events = append(f.events, events...)
-	return len(events), nil
+
+	lotID := int64(0)
+	if f.camera != nil {
+		lotID = f.camera.LotID
+	}
+	changes := make([]model.SpotChange, 0, len(events))
+	for i, event := range events {
+		changes = append(changes, model.SpotChange{
+			SpotID:     event.SpotID,
+			LotID:      lotID,
+			Code:       "S-" + strconv.Itoa(i+1),
+			Status:     event.Status,
+			Confidence: event.Confidence,
+			At:         event.CapturedAt,
+		})
+	}
+	return changes, nil
 }
 
 func internalRouter(token string, store *fakeInternal) *gin.Engine {
+	return internalRouterWithHub(token, store, nil)
+}
+
+func internalRouterWithHub(token string, store *fakeInternal, hub *ws.Hub) *gin.Engine {
 	return NewRouter(
 		&config.Config{
 			AppEnv:        "test",
@@ -84,6 +106,7 @@ func internalRouter(token string, store *fakeInternal) *gin.Engine {
 			DB:       fakePinger{},
 			Internal: store,
 			Tokens:   auth.NewManager("test-secret", time.Hour),
+			Hub:      hub,
 		},
 	)
 }
@@ -271,5 +294,70 @@ func TestSpotEventsInvalidReference(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "invalid_reference") {
 		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+func TestSpotEventsBroadcast(t *testing.T) {
+	hub := ws.NewHub()
+	subscriber := ws.NewClient(hub, 3)
+	store := &fakeInternal{camera: &model.Camera{ID: 7, LotID: 3}}
+	router := internalRouterWithHub("secret", store, hub)
+
+	captured := time.Now().UTC().Format(time.RFC3339)
+	body := `{"camera_id":7,"events":[{"spot_id":21,"status":"occupied","confidence":0.9,"captured_at":"` + captured + `"}]}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/events", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(internalTokenHeader, "secret")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	select {
+	case raw := <-subscriber.Send():
+		var msg ws.Message
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			t.Fatalf("unmarshal message: %v", err)
+		}
+		if msg.Type != "spot_status" || msg.LotID != 3 || msg.SpotID != 21 ||
+			msg.Status != "occupied" || msg.Code == "" {
+			t.Fatalf("unexpected message: %+v", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no live message received")
+	}
+}
+
+func TestCameraHeartbeatBroadcast(t *testing.T) {
+	hub := ws.NewHub()
+	subscriber := ws.NewClient(hub, 3)
+	store := &fakeInternal{camera: &model.Camera{ID: 7, LotID: 3, Status: "offline"}}
+	router := internalRouterWithHub("secret", store, hub)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/cameras/7/heartbeat",
+		strings.NewReader(`{"status":"online","last_frame_at":"2026-11-17T10:00:00Z"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(internalTokenHeader, "secret")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	select {
+	case raw := <-subscriber.Send():
+		var msg ws.Message
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			t.Fatalf("unmarshal message: %v", err)
+		}
+		if msg.Type != "camera_status" || msg.LotID != 3 ||
+			msg.CameraID != 7 || msg.Status != "online" {
+			t.Fatalf("unexpected message: %+v", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no camera message received")
 	}
 }

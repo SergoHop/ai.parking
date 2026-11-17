@@ -11,6 +11,7 @@ import (
 	"github.com/SergoHop/ai.parking/backend/internal/auth"
 	"github.com/SergoHop/ai.parking/backend/internal/config"
 	"github.com/SergoHop/ai.parking/backend/internal/model"
+	"github.com/SergoHop/ai.parking/backend/internal/ws"
 )
 
 type DBPinger interface {
@@ -18,15 +19,15 @@ type DBPinger interface {
 }
 
 type ParkingLotStore interface {
-	ListParkingLots(ctx context.Context) ([]model.ParkingLot, error)
-	GetParkingLot(ctx context.Context, id int64) (*model.ParkingLot, error)
+	ListParkingLots(ctx context.Context, filter model.ParkingLotFilter) ([]model.ParkingLot, error)
+	GetParkingLot(ctx context.Context, id int64, ttl time.Duration) (*model.ParkingLot, error)
 	CreateParkingLot(ctx context.Context, lot model.ParkingLot) (*model.ParkingLot, error)
 	UpdateParkingLot(ctx context.Context, lot model.ParkingLot) (*model.ParkingLot, error)
 	DeleteParkingLot(ctx context.Context, id int64) error
 }
 
 type SpotStore interface {
-	ListSpotsByLot(ctx context.Context, lotID int64) ([]model.ParkingSpot, error)
+	ListSpotsByLot(ctx context.Context, lotID int64, ttl time.Duration) ([]model.ParkingSpot, error)
 	GetSpot(ctx context.Context, id int64) (*model.ParkingSpot, error)
 	CreateSpot(ctx context.Context, spot model.ParkingSpot) (*model.ParkingSpot, error)
 	UpdateSpot(ctx context.Context, spot model.ParkingSpot) (*model.ParkingSpot, error)
@@ -56,7 +57,7 @@ type InternalStore interface {
 		fps *int,
 		resolution *string,
 	) error
-	ApplySpotEvents(ctx context.Context, cameraID *int64, events []model.SpotEvent) (int, error)
+	ApplySpotEvents(ctx context.Context, cameraID *int64, events []model.SpotEvent) ([]model.SpotChange, error)
 }
 
 type Deps struct {
@@ -67,6 +68,7 @@ type Deps struct {
 	Users    UserStore
 	Internal InternalStore
 	Tokens   *auth.Manager
+	Hub      *ws.Hub
 }
 
 type Server struct {
@@ -78,6 +80,7 @@ type Server struct {
 	users    UserStore
 	internal InternalStore
 	tokens   *auth.Manager
+	hub      *ws.Hub
 }
 
 func NewRouter(cfg *config.Config, deps Deps) *gin.Engine {
@@ -90,6 +93,11 @@ func NewRouter(cfg *config.Config, deps Deps) *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
+	hub := deps.Hub
+	if hub == nil {
+		hub = ws.NewHub()
+	}
+
 	srv := &Server{
 		cfg:      cfg,
 		db:       deps.DB,
@@ -99,6 +107,7 @@ func NewRouter(cfg *config.Config, deps Deps) *gin.Engine {
 		users:    deps.Users,
 		internal: deps.Internal,
 		tokens:   deps.Tokens,
+		hub:      hub,
 	}
 
 	router := gin.New()
@@ -144,6 +153,9 @@ func NewRouter(cfg *config.Config, deps Deps) *gin.Engine {
 	internal.Use(srv.requireInternalToken)
 	internal.POST("/cameras/:id/heartbeat", srv.cameraHeartbeat)
 	internal.POST("/events", srv.spotEvents)
+
+	// Live-статусы для карты: /ws/live?lot_id=N (без параметра — все лоты).
+	router.GET("/ws/live", srv.live)
 
 	router.NoRoute(func(c *gin.Context) {
 		writeError(c, http.StatusNotFound, "not_found", "route not found")

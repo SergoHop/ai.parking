@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -11,11 +12,32 @@ import (
 )
 
 func (s *Server) listParkingLots(c *gin.Context) {
-	lots, err := s.lots.ListParkingLots(c.Request.Context())
+	bbox, ok := parseBBox(c)
+	if !ok {
+		return
+	}
+
+	ttl := s.cfg.StatusTTL()
+	lots, err := s.lots.ListParkingLots(c.Request.Context(), model.ParkingLotFilter{
+		BBox: bbox,
+		TTL:  ttl,
+	})
 	if err != nil {
 		writeStoreError(c, err)
 		return
 	}
+
+	if wantsSpots(c) {
+		for i := range lots {
+			spots, err := s.spots.ListSpotsByLot(c.Request.Context(), lots[i].ID, ttl)
+			if err != nil {
+				writeStoreError(c, err)
+				return
+			}
+			lots[i].Spots = spots
+		}
+	}
+
 	c.JSON(http.StatusOK, lots)
 }
 
@@ -25,13 +47,14 @@ func (s *Server) getParkingLot(c *gin.Context) {
 		return
 	}
 
-	lot, err := s.lots.GetParkingLot(c.Request.Context(), id)
+	ttl := s.cfg.StatusTTL()
+	lot, err := s.lots.GetParkingLot(c.Request.Context(), id, ttl)
 	if err != nil {
 		writeStoreError(c, err)
 		return
 	}
 
-	spots, err := s.spots.ListSpotsByLot(c.Request.Context(), id)
+	spots, err := s.spots.ListSpotsByLot(c.Request.Context(), id, ttl)
 	if err != nil {
 		writeStoreError(c, err)
 		return
@@ -42,12 +65,57 @@ func (s *Server) getParkingLot(c *gin.Context) {
 		writeStoreError(c, err)
 		return
 	}
+	s.markCamerasFresh(cameras)
 
 	c.JSON(http.StatusOK, gin.H{
 		"lot":     lot,
 		"spots":   spots,
 		"cameras": cameras,
 	})
+}
+
+// parseBBox reads an optional GeoJSON-order viewport: minLon,minLat,maxLon,maxLat.
+func parseBBox(c *gin.Context) (*model.BBox, bool) {
+	raw := strings.TrimSpace(c.Query("bbox"))
+	if raw == "" {
+		return nil, true
+	}
+
+	parts := strings.Split(raw, ",")
+	if len(parts) != 4 {
+		writeError(c, http.StatusBadRequest, "validation_error",
+			"bbox must be minLon,minLat,maxLon,maxLat")
+		return nil, false
+	}
+
+	values := make([]float64, 4)
+	for i, part := range parts {
+		value, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "validation_error", "bbox values must be numbers")
+			return nil, false
+		}
+		values[i] = value
+	}
+
+	bbox := &model.BBox{
+		MinLon: values[0],
+		MinLat: values[1],
+		MaxLon: values[2],
+		MaxLat: values[3],
+	}
+	if bbox.MinLon < -180 || bbox.MaxLon > 180 ||
+		bbox.MinLat < -90 || bbox.MaxLat > 90 ||
+		bbox.MinLon >= bbox.MaxLon || bbox.MinLat >= bbox.MaxLat {
+		writeError(c, http.StatusBadRequest, "validation_error", "invalid bbox bounds")
+		return nil, false
+	}
+	return bbox, true
+}
+
+func wantsSpots(c *gin.Context) bool {
+	include := strings.ToLower(strings.TrimSpace(c.Query("include")))
+	return include == "spots" || include == "all"
 }
 
 func (s *Server) createParkingLot(c *gin.Context) {

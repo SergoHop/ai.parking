@@ -15,7 +15,7 @@ func (s *Server) listCameras(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := s.lots.GetParkingLot(c.Request.Context(), lotID); err != nil {
+	if _, err := s.lots.GetParkingLot(c.Request.Context(), lotID, s.cfg.StatusTTL()); err != nil {
 		writeStoreError(c, err)
 		return
 	}
@@ -25,6 +25,7 @@ func (s *Server) listCameras(c *gin.Context) {
 		writeStoreError(c, err)
 		return
 	}
+	s.markCamerasFresh(cameras)
 	c.JSON(http.StatusOK, cameras)
 }
 
@@ -37,7 +38,7 @@ func (s *Server) createCamera(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
-	if _, err := s.lots.GetParkingLot(c.Request.Context(), *in.LotID); err != nil {
+	if _, err := s.lots.GetParkingLot(c.Request.Context(), *in.LotID, s.cfg.StatusTTL()); err != nil {
 		writeStoreError(c, err)
 		return
 	}
@@ -64,7 +65,7 @@ func (s *Server) updateCamera(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
-	if _, err := s.lots.GetParkingLot(c.Request.Context(), *in.LotID); err != nil {
+	if _, err := s.lots.GetParkingLot(c.Request.Context(), *in.LotID, s.cfg.StatusTTL()); err != nil {
 		writeStoreError(c, err)
 		return
 	}

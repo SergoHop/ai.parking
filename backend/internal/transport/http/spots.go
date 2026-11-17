@@ -15,12 +15,12 @@ func (s *Server) listSpots(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := s.lots.GetParkingLot(c.Request.Context(), lotID); err != nil {
+	if _, err := s.lots.GetParkingLot(c.Request.Context(), lotID, s.cfg.StatusTTL()); err != nil {
 		writeStoreError(c, err)
 		return
 	}
 
-	spots, err := s.spots.ListSpotsByLot(c.Request.Context(), lotID)
+	spots, err := s.spots.ListSpotsByLot(c.Request.Context(), lotID, s.cfg.StatusTTL())
 	if err != nil {
 		writeStoreError(c, err)
 		return
@@ -33,7 +33,7 @@ func (s *Server) createSpot(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := s.lots.GetParkingLot(c.Request.Context(), lotID); err != nil {
+	if _, err := s.lots.GetParkingLot(c.Request.Context(), lotID, s.cfg.StatusTTL()); err != nil {
 		writeStoreError(c, err)
 		return
 	}

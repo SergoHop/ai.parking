@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -50,107 +51,58 @@ func scanParkingLot(row rowScanner) (*model.ParkingLot, error) {
 	return &lot, nil
 }
 
-func (d *DB) ListParkingLots(ctx context.Context) ([]model.ParkingLot, error) {
-	const query = `
-		SELECT ` + parkingLotColumns + `,
-		       COALESCE(s.total, 0), COALESCE(s.free, 0),
-		       COALESCE(s.occupied, 0), COALESCE(s.unknown, 0),
-		       c.last_frame_at
-		FROM parking_lots pl
-		LEFT JOIN LATERAL (
-			SELECT count(*) AS total,
-			       count(*) FILTER (WHERE st.status = 'free') AS free,
-			       count(*) FILTER (WHERE st.status = 'occupied') AS occupied,
-			       count(*) FILTER (WHERE st.status = 'unknown') AS unknown
+// effectiveStatusSQL turns stored occupancy into what API clients may see.
+// A status is trustworthy only while its camera is online and its last frame
+// is younger than the TTL ($1 in seconds). Otherwise it is reported as unknown.
+// Requires aliases st (spot_status) and cam (cameras).
+const effectiveStatusSQL = `
+	CASE
+		WHEN st.status IN ('free', 'occupied')
+		 AND cam.status = 'online'
+		 AND cam.last_frame_at IS NOT NULL
+		 AND cam.last_frame_at >= now() - make_interval(secs => $1::double precision)
+		THEN st.status
+		ELSE 'unknown'
+	END`
+
+const parkingLotAggregatesSQL = `
+	LEFT JOIN LATERAL (
+		SELECT count(*) AS total,
+		       count(*) FILTER (WHERE s.effective_status = 'free') AS free,
+		       count(*) FILTER (WHERE s.effective_status = 'occupied') AS occupied,
+		       count(*) FILTER (WHERE s.effective_status = 'unknown') AS unknown
+		FROM (
+			SELECT ` + effectiveStatusSQL + ` AS effective_status
 			FROM parking_spots ps
 			LEFT JOIN spot_status st ON st.spot_id = ps.id
+			LEFT JOIN cameras cam ON cam.id = ps.camera_id
 			WHERE ps.lot_id = pl.id
-		) s ON true
-		LEFT JOIN LATERAL (
-			SELECT max(last_frame_at) AS last_frame_at
-			FROM cameras
-			WHERE lot_id = pl.id
-		) c ON true
-		ORDER BY pl.id`
+		) s
+	) agg ON true
+	LEFT JOIN LATERAL (
+		SELECT max(last_frame_at) AS last_frame_at,
+		       COALESCE(bool_or(
+		           status = 'online'
+		           AND last_frame_at >= now() - make_interval(secs => $1::double precision)
+		       ), false) AS fresh
+		FROM cameras
+		WHERE lot_id = pl.id
+	) cam ON true`
 
-	rows, err := d.pool.Query(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("query parking lots: %w", err)
-	}
-	defer rows.Close()
-
-	lots := make([]model.ParkingLot, 0)
-	for rows.Next() {
-		var (
-			lot                        model.ParkingLot
-			geo                        []byte
-			total, free, occupied, unk int64
-		)
-		if err := rows.Scan(
-			&lot.ID, &lot.Name, &lot.Address, &lot.Kind,
-			&lot.CenterLat, &lot.CenterLon, &lot.EntranceLat, &lot.EntranceLon,
-			&lot.RadiusM, &geo, &lot.CreatedAt,
-			&total, &free, &occupied, &unk,
-			&lot.LastFrameAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan parking lot: %w", err)
-		}
-		if len(geo) > 0 {
-			lot.GeoJSON = json.RawMessage(geo)
-		}
-		lot.TotalSpots = int(total)
-		lot.FreeSpots = int(free)
-		lot.OccupiedSpots = int(occupied)
-		lot.UnknownSpots = int(unk)
-		lots = append(lots, lot)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate parking lots: %w", err)
-	}
-	return lots, nil
-}
-
-func (d *DB) GetParkingLot(ctx context.Context, id int64) (*model.ParkingLot, error) {
-	const query = `
-		SELECT ` + parkingLotColumns + `,
-		       COALESCE(s.total, 0), COALESCE(s.free, 0),
-		       COALESCE(s.occupied, 0), COALESCE(s.unknown, 0),
-		       c.last_frame_at
-		FROM parking_lots pl
-		LEFT JOIN LATERAL (
-			SELECT count(*) AS total,
-			       count(*) FILTER (WHERE st.status = 'free') AS free,
-			       count(*) FILTER (WHERE st.status = 'occupied') AS occupied,
-			       count(*) FILTER (WHERE st.status = 'unknown') AS unknown
-			FROM parking_spots ps
-			LEFT JOIN spot_status st ON st.spot_id = ps.id
-			WHERE ps.lot_id = pl.id
-		) s ON true
-		LEFT JOIN LATERAL (
-			SELECT max(last_frame_at) AS last_frame_at
-			FROM cameras
-			WHERE lot_id = pl.id
-		) c ON true
-		WHERE pl.id = $1`
-
+func scanParkingLotWithStats(row rowScanner) (*model.ParkingLot, error) {
 	var (
 		lot                        model.ParkingLot
 		geo                        []byte
 		total, free, occupied, unk int64
 	)
-	err := d.pool.QueryRow(ctx, query, id).Scan(
+	if err := row.Scan(
 		&lot.ID, &lot.Name, &lot.Address, &lot.Kind,
 		&lot.CenterLat, &lot.CenterLon, &lot.EntranceLat, &lot.EntranceLon,
 		&lot.RadiusM, &geo, &lot.CreatedAt,
 		&total, &free, &occupied, &unk,
-		&lot.LastFrameAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, repository.ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get parking lot: %w", err)
+		&lot.LastFrameAt, &lot.Fresh,
+	); err != nil {
+		return nil, err
 	}
 	if len(geo) > 0 {
 		lot.GeoJSON = json.RawMessage(geo)
@@ -160,6 +112,67 @@ func (d *DB) GetParkingLot(ctx context.Context, id int64) (*model.ParkingLot, er
 	lot.OccupiedSpots = int(occupied)
 	lot.UnknownSpots = int(unk)
 	return &lot, nil
+}
+
+func (d *DB) ListParkingLots(ctx context.Context, filter model.ParkingLotFilter) ([]model.ParkingLot, error) {
+	query := `
+		SELECT ` + parkingLotColumns + `,
+		       COALESCE(agg.total, 0), COALESCE(agg.free, 0),
+		       COALESCE(agg.occupied, 0), COALESCE(agg.unknown, 0),
+		       cam.last_frame_at, COALESCE(cam.fresh, false)
+		FROM parking_lots pl` + parkingLotAggregatesSQL + `
+		WHERE ($2::double precision IS NULL OR pl.center_lon BETWEEN $2 AND $3)
+		  AND ($4::double precision IS NULL OR pl.center_lat BETWEEN $4 AND $5)
+		ORDER BY pl.id`
+
+	var (
+		minLon, maxLon, minLat, maxLat *float64
+	)
+	if filter.BBox != nil {
+		minLon, maxLon = &filter.BBox.MinLon, &filter.BBox.MaxLon
+		minLat, maxLat = &filter.BBox.MinLat, &filter.BBox.MaxLat
+	}
+
+	rows, err := d.pool.Query(ctx, query,
+		int(filter.TTL.Seconds()), minLon, maxLon, minLat, maxLat,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query parking lots: %w", err)
+	}
+	defer rows.Close()
+
+	lots := make([]model.ParkingLot, 0)
+	for rows.Next() {
+		lot, err := scanParkingLotWithStats(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan parking lot: %w", err)
+		}
+		lots = append(lots, *lot)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate parking lots: %w", err)
+	}
+	return lots, nil
+}
+
+func (d *DB) GetParkingLot(ctx context.Context, id int64, ttl time.Duration) (*model.ParkingLot, error) {
+	const query = `
+		SELECT ` + parkingLotColumns + `,
+		       COALESCE(agg.total, 0), COALESCE(agg.free, 0),
+		       COALESCE(agg.occupied, 0), COALESCE(agg.unknown, 0),
+		       cam.last_frame_at, COALESCE(cam.fresh, false)
+		FROM parking_lots pl` + parkingLotAggregatesSQL + `
+		WHERE pl.id = $2`
+
+	lot, err := scanParkingLotWithStats(d.pool.QueryRow(ctx, query, int(ttl.Seconds()), id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, repository.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get parking lot: %w", err)
+	}
+	return lot, nil
 }
 
 func (d *DB) CreateParkingLot(ctx context.Context, lot model.ParkingLot) (*model.ParkingLot, error) {

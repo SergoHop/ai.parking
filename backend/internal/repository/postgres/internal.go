@@ -44,19 +44,26 @@ func (d *DB) UpdateCameraHeartbeat(
 }
 
 // ApplySpotEvents writes occupancy history and updates current spot states in
-// one transaction. It returns the number of stored events.
-func (d *DB) ApplySpotEvents(ctx context.Context, cameraID *int64, events []model.SpotEvent) (int, error) {
+// one transaction. It returns the accepted changes with lot and spot code, so
+// callers can broadcast them over WebSocket after the commit.
+func (d *DB) ApplySpotEvents(
+	ctx context.Context,
+	cameraID *int64,
+	events []model.SpotEvent,
+) ([]model.SpotChange, error) {
 	if len(events) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("begin events transaction: %w", err)
+		return nil, fmt.Errorf("begin events transaction: %w", err)
 	}
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+
+	changes := make([]model.SpotChange, 0, len(events))
 
 	for i := range events {
 		event := &events[i]
@@ -71,23 +78,35 @@ func (d *DB) ApplySpotEvents(ctx context.Context, cameraID *int64, events []mode
 			event.CapturedAt, event.SnapshotPath,
 		).Scan(&eventID)
 		if err != nil {
-			return 0, mapEventError(err)
+			return nil, mapEventError(err)
 		}
 
-		_, err = tx.Exec(ctx, `
-			INSERT INTO spot_status
-				(spot_id, status, confidence, updated_at, last_event_id)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (spot_id) DO UPDATE
-			SET status = EXCLUDED.status,
-			    confidence = EXCLUDED.confidence,
-			    updated_at = EXCLUDED.updated_at,
-			    last_event_id = EXCLUDED.last_event_id`,
+		var change model.SpotChange
+		err = tx.QueryRow(ctx, `
+			WITH upserted AS (
+				INSERT INTO spot_status
+					(spot_id, status, confidence, updated_at, last_event_id)
+				VALUES ($1, $2, $3, $4, $5)
+				ON CONFLICT (spot_id) DO UPDATE
+				SET status = EXCLUDED.status,
+				    confidence = EXCLUDED.confidence,
+				    updated_at = EXCLUDED.updated_at,
+				    last_event_id = EXCLUDED.last_event_id
+				RETURNING spot_id, status, confidence, updated_at
+			)
+			SELECT u.spot_id, ps.lot_id, ps.code,
+			       u.status, u.confidence, u.updated_at
+			FROM upserted u
+			JOIN parking_spots ps ON ps.id = u.spot_id`,
 			event.SpotID, event.Status, event.Confidence, event.CapturedAt, eventID,
+		).Scan(
+			&change.SpotID, &change.LotID, &change.Code,
+			&change.Status, &change.Confidence, &change.At,
 		)
 		if err != nil {
-			return 0, mapEventError(err)
+			return nil, mapEventError(err)
 		}
+		changes = append(changes, change)
 	}
 
 	if cameraID != nil {
@@ -100,14 +119,14 @@ func (d *DB) ApplySpotEvents(ctx context.Context, cameraID *int64, events []mode
 			WHERE id = $1`,
 			*cameraID, latestCapturedAt(events),
 		); err != nil {
-			return 0, mapEventError(err)
+			return nil, mapEventError(err)
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit events transaction: %w", err)
+		return nil, fmt.Errorf("commit events transaction: %w", err)
 	}
-	return len(events), nil
+	return changes, nil
 }
 
 func latestCapturedAt(events []model.SpotEvent) time.Time {

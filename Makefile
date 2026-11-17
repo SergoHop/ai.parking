@@ -8,9 +8,13 @@ POSTGRES_DB ?= parking
 POSTGRES_PORT ?= 5432
 MIGRATE_DB_URL = postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)?sslmode=disable
 
-.PHONY: help up down logs ps rebuild backend cv cv-setup cv-model cv-run frontend test vet tidy psql migrate-up migrate-down seed seed-reset
+.PHONY: help up down logs ps rebuild backend cv cv-setup cv-model cv-run frontend frontend-install frontend-build test vet tidy psql migrate-up migrate-down seed seed-reset
 
 CV_PY := cv/.venv/bin/python
+
+# Node может быть не в PATH (например, портативная сборка в ~/.local/node).
+NODE_BIN := $(shell command -v node 2>/dev/null || echo "$(HOME)/.local/node/bin/node")
+NPM := $(if $(shell command -v npm 2>/dev/null),npm,$(HOME)/.local/node/bin/npm)
 
 help:            ## Показать команды
 	@grep -E '^[a-zA-Z_-]+:.*?## ' Makefile | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -49,7 +53,13 @@ cv-run:          ## Запустить CV-воркер без FastAPI (отла�
 	cd cv && .venv/bin/python -m app.pipeline.runner
 
 frontend:        ## Запустить фронтенд локально
-	cd frontend && npm run dev
+	cd frontend && PATH="$(dir $(NODE_BIN)):$$PATH" $(NPM) run dev
+
+frontend-install: ## Установить зависимости фронтенда
+	cd frontend && PATH="$(dir $(NODE_BIN)):$$PATH" $(NPM) install
+
+frontend-build:  ## Проверить типы и собрать фронтенд
+	cd frontend && PATH="$(dir $(NODE_BIN)):$$PATH" $(NPM) run build
 
 test:            ## Тесты
 	cd backend && go test ./...
